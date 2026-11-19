@@ -1,0 +1,79 @@
+name: Nova Memory Core - Auto Unzip & Build Android
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Extract Project ZIP & Inspect Structure
+        run: |
+          mkdir -p extracted_project
+          unzip -q *.zip -d extracted_project
+          echo "=== Extracted Files ==="
+          ls -la extracted_project
+          find extracted_project -maxdepth 3
+
+      - name: 3. Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 4. Build Web App (If package.json exists)
+        run: |
+          PKG_DIR=$(find extracted_project -name "package.json" -printf "%h\n" | head -n 1)
+          if [ -n "$PKG_DIR" ]; then
+            echo "Found package.json in $PKG_DIR"
+            cd "$PKG_DIR"
+            npm install --legacy-peer-deps
+            npm run build
+          else
+            echo "No package.json found, skipping web build."
+          fi
+
+      - name: 5. Set up Java 17 (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 6. Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 7. Locate Android Project & Build APK + AAB
+        run: |
+          ANDROID_DIR=$(find extracted_project -name "AndroidManifest.xml" -printf "%h\n" | sed 's|/src/main||' | sed 's|/app$||' | head -n 1)
+          if [ -z "$ANDROID_DIR" ]; then
+            echo "Error: Could not find Android project directory!"
+            exit 1
+          fi
+          echo "Found Android root at: $ANDROID_DIR"
+          cd "$ANDROID_DIR"
+          
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug bundleRelease
+          else
+            gradle assembleDebug bundleRelease
+          fi
+
+      - name: 8. Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-Memory-Core-APK
+          path: extracted_project/**/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
+
+      - name: 9. Upload Release AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-Memory-Core-GooglePlay-AAB
+          path: extracted_project/**/build/outputs/bundle/**/*.aab
+          if-no-files-found: warn
